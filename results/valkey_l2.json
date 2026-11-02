@@ -1,0 +1,21 @@
+{
+  "l1_blocks": 64,
+  "block_size": 16,
+  "dim": 64,
+  "sequences_offered": 200,
+  "tokens_total": 44166,
+  "baseline_sequences_served": 4,
+  "tiered_sequences_served": 200,
+  "baseline_served_pct": 2.0,
+  "tiered_served_pct": 100.0,
+  "spills": 246,
+  "restores": 50,
+  "l2_hit_rate": 1.0,
+  "l2_bytes_written": 49716020,
+  "l2_bytes_read": 13343463,
+  "valkey_used_memory_bytes": 59779008,
+  "write_wall_seconds": 0.46,
+  "restore_wall_seconds": 0.09,
+  "mean_restore_ms": 1.7,
+  "re_read_sequences": 50
+}
