@@ -13,7 +13,7 @@
         default = pkgs.mkShell {
           packages = [ (py pkgs) pkgs.valkey ];
           shellHook = ''
-            echo "start a store: valkey-server --port 6390 --save '' --appendonly no &"
+            echo "start a store: valkey-server --port 6390 --appendonly no &"
             echo "then:         python3 tests/test_tiered.py"
           '';
         };

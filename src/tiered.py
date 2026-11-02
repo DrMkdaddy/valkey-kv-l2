@@ -15,10 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-SIBLING = Path(__file__).resolve().parents[2] / "paged-attention-lab" / "src"
-if SIBLING.exists():
-    sys.path.insert(0, str(SIBLING))
-
+# vendored copy of paged-attention-lab/src/paged_kv.py so this repo stands alone
 from paged_kv import OutOfBlocks, PagedKVCache  # noqa: E402
 
 from l2 import L2BlockStore  # noqa: E402
