@@ -1,0 +1,20 @@
+{
+  "tokens": 4096,
+  "kv_bytes_per_token": 147456,
+  "prefill": {
+    "prompt_tokens": 4561,
+    "prompt_ms": 809.919,
+    "wall_ms": 822.4,
+    "prompt_per_second": 5631.427340264891
+  },
+  "restore": {
+    "blocks": 256,
+    "bytes_per_block": 2359296,
+    "total_mib": 576.0,
+    "write_seconds": 0.497,
+    "read_seconds": 0.783,
+    "read_mib_per_s": 736.1
+  },
+  "restore_ms": 783.0,
+  "prefill_over_restore": 1.03
+}

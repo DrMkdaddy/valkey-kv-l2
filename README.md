@@ -28,6 +28,29 @@ Restoring is not free, and the 1.7 ms is localhost with no network. Across a
 network that number becomes the RTT plus transfer, which is why L2 sits behind a
 block cache rather than in front of every read.
 
+## Where it actually pays
+
+The capacity number above compares tiering against refusing work. The real
+alternative to a restore is a prefill, so both were measured at the same token
+counts on the same machine, Qwen3-4B at f16 KV (144 KiB per token).
+
+| prefix tokens | prefill | restore from Valkey | prefill / restore |
+|---:|---:|---:|---:|
+| 512 | 100 ms | 104 ms | 0.97 |
+| 2,048 | 373 ms | 416 ms | 0.90 |
+| 4,096 | 810 ms | 783 ms | 1.03 |
+| 6,144 | 1,310 ms | 1,025 ms | 1.28 |
+
+**Break-even is around 4k tokens.** Below it, the round trip and the transfer
+cost more than recomputing, and the cache is a pessimisation. Above it, restore
+wins because prefill grows superlinearly with context while the restore only
+grows with bytes.
+
+That is the whole argument for an external KV store: it is a bandwidth bet, not
+a latency win. It pays when the model is large, the prefix is long, or the KV is
+quantized so the bytes shrink. On a 4B model with 512-token prompts it is
+strictly worse than not caching.
+
 ## What is implemented
 
 - `src/resp.py` — RESP client, stdlib sockets only. PING, SET with EX, GET, DEL,
