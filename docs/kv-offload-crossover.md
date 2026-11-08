@@ -7,11 +7,10 @@ sequence to Valkey removes the cliff. In the capacity benchmark it takes the
 pool from **4 of 200 sequences served to 200 of 200**, for 60 MB of shared
 memory and a 1.7 ms restore.
 
-That compares tiering against refusing work. The real alternative to a restore
-is a **prefill**, so both were measured at the same prefix lengths on the same
-machine. The result is the crossover, not the capacity number: **restore only
-beats recomputing above roughly 4k prefix tokens**, and below 2k it is strictly
-worse than not caching at all.
+The capacity run measures tiering against refusing work. A restore's real
+alternative is a **prefill**, so both ran at the same prefix lengths on the
+same machine. **Restore only beats recomputing above roughly 4k prefix
+tokens**, and below 2k it is worse than not caching at all.
 
 ![Restore from Valkey versus recomputing the prefix](restore-vs-prefill.svg)
 
@@ -85,10 +84,10 @@ attention work grows with context. At 512 tokens prefill takes 100 ms; at 6,144
 it takes 1,310 ms, which is 12x the tokens for 13x the time on this model. The
 restore curve is flatter because after a fixed overhead it only pays for bytes.
 
-So the cache is a **bandwidth bet**: it wins when the bytes are cheap relative
-to the compute they replace. That means a large model, a long prefix, or KV
-that has been quantized so the bytes shrink. On a 4B model with 512-token
-prompts, an external KV store is a pessimisation.
+The cache is a **bandwidth bet**: it wins when the bytes are cheap relative to
+the compute they replace, which happens with a large model, a long prefix, or
+quantized KV. On a 4B model with 512-token prompts, an external KV store costs
+more than it saves.
 
 ## What would move the crossover
 
@@ -101,7 +100,7 @@ prompts, an external KV store is a pessimisation.
   restore side.
 - **Model size.** KV bytes per token grow with layers and KV heads, and prefill
   FLOPs grow with parameters. Which side wins depends on the ratio, which is
-  why it is measured per model rather than assumed.
+  why the ratio is measured per model.
 - **Compression.** The store compresses with zlib level 1. A different codec
   changes bytes on the wire, not the shape of the result.
 
@@ -118,8 +117,7 @@ re-run it, run it on an idle box and commit what you get.
 
 ## Limits
 
-- This is a reference KV stack, not a serving deployment. No GPU concurrency
-  numbers, no production traffic.
+- A reference KV stack. No GPU concurrency numbers, no production traffic.
 - The restore path moves random bytes of the right size. It measures transfer
   and deserialization, not the attention math a real restore would preserve.
 - Localhost only. No network model.

@@ -23,11 +23,10 @@ flowchart LR
     E -.-> I
 ```
 
-**Why:** a fixed KV pool turns concurrency into a cliff. The moment the pool is
-full the server refuses work, even though most of the resident KV belongs to
-requests that are finished with. Spilling to a shared store converts that cliff
-into a restore cost. The interesting number is that cost measured against the
-thing it competes with, which is a prefill.
+A fixed KV pool turns concurrency into a cliff: when the pool fills, the server
+refuses work while most resident KV belongs to finished requests. Spilling to a
+shared store converts the cliff into a restore cost, and that cost has to be
+measured against prefill, the work it replaces.
 
 ## Results
 
@@ -52,19 +51,17 @@ Restore versus recompute, Qwen3-4B f16 KV (144 KiB/token), same machine:
 | 4,096 | 810 ms | 783 ms | 1.03 |
 | 6,144 | 1,310 ms | 1,025 ms | **1.28** |
 
-**Break-even is around 4k tokens.** Below it the round trip and the transfer
-cost more than recomputing, and the cache is a pessimisation. Above it the
-restore wins because prefill's per-token cost rises with context while the
-restore only pays for bytes.
+Break-even is around 4k tokens. Below it the round trip and transfer cost more
+than recomputing; above it the restore wins because prefill's per-token cost
+rises with context and the restore only pays for bytes.
 
-That is the argument for an external KV store: a bandwidth bet, not a latency
-win. It pays when the model is large, the prefix is long, or the KV is quantized
-so the bytes shrink. On a 4B model with 512-token prompts it is strictly worse
-than not caching.
+An external KV store is a bandwidth bet. It pays when the model is large, the
+prefix is long, or the KV is quantized so the bytes shrink. On a 4B model with
+512-token prompts it is worse than not caching.
 
-The full argument, method, and the cases where the numbers move are in
-[`docs/kv-offload-crossover.md`](docs/kv-offload-crossover.md), with the chart
-in [`docs/restore-vs-prefill.svg`](docs/restore-vs-prefill.svg).
+The method and the cases that move the numbers are in
+[`docs/kv-offload-crossover.md`](docs/kv-offload-crossover.md); the chart is in
+[`docs/restore-vs-prefill.svg`](docs/restore-vs-prefill.svg).
 
 ## Quick start
 
