@@ -11,10 +11,11 @@
     in {
       devShells = forAll (pkgs: _: {
         default = pkgs.mkShell {
-          packages = [ (py pkgs) pkgs.valkey ];
+          packages = [ (py pkgs) pkgs.valkey pkgs.gnumake ];
           shellHook = ''
-            echo "start a store: valkey-server --port 6390 --appendonly no &"
-            echo "then:         python3 tests/test_tiered.py"
+            echo "make bench    capacity benchmark + chart (starts its own Valkey)"
+            echo "make test     lossless round-trip and tiering invariants"
+            echo "make bench-restore   full sweep against a live llama-server"
           '';
         };
       });
@@ -28,6 +29,15 @@
           sleep 2
           python3 tests/test_tiered.py
           valkey-cli -p 6390 shutdown nosave || true
+          touch $out
+        '';
+
+        # The chart is committed. This fails when results/ and the SVG drift.
+        chart = pkgs.runCommand "valkey-kv-l2-chart" {
+          buildInputs = [ (py pkgs) ];
+        } ''
+          cp -r ${self} work && chmod -R u+w work && cd work
+          python3 bench/chart.py --check
           touch $out
         '';
       });

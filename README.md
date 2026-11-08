@@ -1,55 +1,97 @@
 # valkey-kv-l2
 
-A Valkey-backed L2 for an LLM KV cache. L1 is a fixed block pool; when it fills,
-the least recently used sequence spills to Valkey and is restored on its next
-read. Blocks are content-addressed, so a restored sequence can hit an entry
-written by another sequence or by a previous process.
+A Valkey-backed L2 for an LLM KV cache. A fixed pool served **4 of 200
+sequences**; with a shared L2 behind it, **all 200**, and the measured
+break-even against recomputing the prefix is **above roughly 4k tokens**.
+
+L1 is a fixed block pool. When it fills, the least recently used sequence
+spills to Valkey and is restored on its next read. Blocks are content-addressed
+(sha256 over the K and V bytes), so a restored sequence can hit an entry written
+by another sequence or by a previous process.
+
+```mermaid
+flowchart LR
+    A["append K, V"] --> B{"L1 has blocks?"}
+    B -- yes --> C["write to L1 block pool<br/>64 blocks x 16 tokens"]
+    B -- no --> D["spill LRU sequence"]
+    D --> E[("Valkey L2<br/>content-addressed blocks<br/>zlib-1, TTL")]
+    C --> F["read sequence"]
+    F --> G{"blocks in L1?"}
+    G -- yes --> H["gather from L1"]
+    G -- no --> I["restore from Valkey<br/>1.7 ms localhost"]
+    I --> H
+    E -.-> I
+```
 
 **Why:** a fixed KV pool turns concurrency into a cliff. The moment the pool is
 full the server refuses work, even though most of the resident KV belongs to
 requests that are finished with. Spilling to a shared store converts that cliff
-into a restore cost.
+into a restore cost. The interesting number is that cost measured against the
+thing it competes with, which is a prefill.
 
-## Result
+## Results
 
-64-block L1, block size 16, dim 64. 200 sequences of 32-400 tokens, 44,166 tokens
-total, which is 43x more KV than L1 can hold.
+64-block L1, block size 16, dim 64; 200 sequences of 32–400 tokens, 44,166
+tokens total, 43x more KV than L1 can hold.
 
 | Metric | Value |
 |---|---|
-| Sequences served, fixed pool (L1 only) | **4 of 200 (2%)** |
+| Sequences served, fixed pool | **4 of 200 (2%)** |
 | Sequences served, tiered | **200 of 200 (100%)** |
 | L2 hit rate on restore | **1.00** |
-| Mean restore time | **1.7 ms** |
-| Valkey memory holding 44k tokens of KV | **60 MB** |
+| Mean restore time | **1.7 ms** (localhost) |
+| Valkey memory holding 44k tokens | **60 MB** |
 | Bytes written to Valkey | 49.7 MB |
 
-Restoring is not free, and the 1.7 ms is localhost with no network. Across a
-network that number becomes the RTT plus transfer, which is why L2 sits behind a
-block cache rather than in front of every read.
-
-## Where it actually pays
-
-The capacity number above compares tiering against refusing work. The real
-alternative to a restore is a prefill, so both were measured at the same token
-counts on the same machine, Qwen3-4B at f16 KV (144 KiB per token).
+Restore versus recompute, Qwen3-4B f16 KV (144 KiB/token), same machine:
 
 | prefix tokens | prefill | restore from Valkey | prefill / restore |
 |---:|---:|---:|---:|
 | 512 | 100 ms | 104 ms | 0.97 |
 | 2,048 | 373 ms | 416 ms | 0.90 |
 | 4,096 | 810 ms | 783 ms | 1.03 |
-| 6,144 | 1,310 ms | 1,025 ms | 1.28 |
+| 6,144 | 1,310 ms | 1,025 ms | **1.28** |
 
-**Break-even is around 4k tokens.** Below it, the round trip and the transfer
-cost more than recomputing, and the cache is a pessimisation. Above it, restore
-wins because prefill grows superlinearly with context while the restore only
-grows with bytes.
+**Break-even is around 4k tokens.** Below it the round trip and the transfer
+cost more than recomputing, and the cache is a pessimisation. Above it the
+restore wins because prefill's per-token cost rises with context while the
+restore only pays for bytes.
 
-That is the whole argument for an external KV store: it is a bandwidth bet, not
-a latency win. It pays when the model is large, the prefix is long, or the KV is
-quantized so the bytes shrink. On a 4B model with 512-token prompts it is
-strictly worse than not caching.
+That is the argument for an external KV store: a bandwidth bet, not a latency
+win. It pays when the model is large, the prefix is long, or the KV is quantized
+so the bytes shrink. On a 4B model with 512-token prompts it is strictly worse
+than not caching.
+
+The full argument, method, and the cases where the numbers move are in
+[`docs/kv-offload-crossover.md`](docs/kv-offload-crossover.md), with the chart
+in [`docs/restore-vs-prefill.svg`](docs/restore-vs-prefill.svg).
+
+## Quick start
+
+Nix provides the store, Python with numpy, and make. The benchmark starts and
+stops its own Valkey if none is listening.
+
+```bash
+nix develop
+make bench
+```
+
+That runs the lossless round-trip and tiering tests, the capacity benchmark, and
+re-renders the chart from the committed sweep. To verify the committed chart
+matches the committed results:
+
+```bash
+make check
+```
+
+The crossover numbers need a `llama-server` on `:8097`:
+
+```bash
+make bench-restore LLAMA_URL=http://127.0.0.1:8097
+```
+
+`make help` lists every target. `nix flake check` runs the tests and the chart
+freshness check.
 
 ## What is implemented
 
@@ -60,6 +102,10 @@ strictly worse than not caching.
 - `src/tiered.py` — tiering policy. Reserves blocks for a whole append before
   writing, spills LRU sequences, restores on read, spills again if a restore
   itself needs space.
+- `bench/bench.py` — capacity benchmark. `bench/sweep.py` and
+  `bench/restore_vs_prefill.py` — restore versus prefill.
+- `bench/chart.py` — the SVG chart, stdlib only and deterministic, so the
+  committed file can be diffed.
 
 ## Correctness
 
@@ -67,23 +113,20 @@ A restored sequence must be identical to the one that was spilled, or the cache
 is silently corrupting inference.
 
 ```
-$ python3 tests/test_tiered.py
+$ make test
 ok   encode/decode is lossless
+ok   low-entropy blocks compress (127 < 2048)
+ok   random blocks stay within framing overhead
 ok   keys are content-addressed
+ok   valkey responds to PING
+ok   block written to valkey
 ok   block restored byte-identical
+ok   block removed
 ok   a sequence spilled under block pressure
 ok   restored sequence is identical to the pre-spill one
 ok   restore produced L2 hits
 ok   tiering served 20 sequences with only 8 blocks
 all passed (0 failure(s))
-```
-
-## Reproduce
-
-```bash
-nix shell nixpkgs#valkey -c valkey-server --port 6390 --save '' --appendonly no &
-python3 tests/test_tiered.py
-python3 bench/bench.py            # writes results/valkey_l2.json
 ```
 
 ## Scope
