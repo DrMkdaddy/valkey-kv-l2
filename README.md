@@ -1,8 +1,8 @@
 # valkey-kv-l2
 
-A Valkey-backed L2 for an LLM KV cache. A fixed pool served **4 of 200
-sequences**; with a shared L2 behind it, **all 200**, and the measured
-break-even against recomputing the prefix is **above roughly 4k tokens**.
+A Valkey-backed L2 for an LLM KV cache. With a fixed 64-block L1, 4 of 200
+sequences completed; with the L2 behind it, all 200 did. Restoring a prefix
+beats recomputing it above roughly 4k tokens.
 
 L1 is a fixed block pool. When it fills, the least recently used sequence
 spills to Valkey and is restored on its next read. Blocks are content-addressed
@@ -23,10 +23,10 @@ flowchart LR
     E -.-> I
 ```
 
-A fixed KV pool turns concurrency into a cliff: when the pool fills, the server
-refuses work while most resident KV belongs to finished requests. Spilling to a
-shared store converts the cliff into a restore cost, and that cost has to be
-measured against prefill, the work it replaces.
+When a fixed KV pool fills, new requests are refused even if most resident KV
+belongs to finished requests. Spilling to a shared store replaces that refusal
+with a restore cost. Restore cost is compared against prefill, the work it
+replaces.
 
 ## Results
 
@@ -51,15 +51,15 @@ Restore versus recompute, Qwen3-4B f16 KV (144 KiB/token), same machine:
 | 4,096 | 810 ms | 783 ms | 1.03 |
 | 6,144 | 1,310 ms | 1,025 ms | **1.28** |
 
-Break-even is around 4k tokens. Below it the round trip and transfer cost more
-than recomputing; above it the restore wins because prefill's per-token cost
-rises with context and the restore only pays for bytes.
+Break-even is around 4k tokens. Below it, the round trip and transfer cost more
+than recomputing. Above it, restore wins because prefill cost rises with context
+while restore scales with the bytes transferred.
 
-An external KV store is a bandwidth bet. It pays when the model is large, the
-prefix is long, or the KV is quantized so the bytes shrink. On a 4B model with
-512-token prompts it is worse than not caching.
+An external KV store pays when the model is large, the prefix is long, or the
+KV is quantized. On this 4B model with 512-token prompts, it is slower than
+recomputing.
 
-The method and the cases that move the numbers are in
+Method and sensitivity are in
 [`docs/kv-offload-crossover.md`](docs/kv-offload-crossover.md); the chart is in
 [`docs/restore-vs-prefill.svg`](docs/restore-vs-prefill.svg).
 
@@ -106,8 +106,8 @@ freshness check.
 
 ## Correctness
 
-A restored sequence must be identical to the one that was spilled, or the cache
-is silently corrupting inference.
+A restored sequence must match the spilled sequence; otherwise the cache
+corrupts inference.
 
 ```
 $ make test
